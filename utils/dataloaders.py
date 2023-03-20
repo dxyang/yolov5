@@ -257,6 +257,11 @@ class LoadImages:
         videos = [x for x in files if x.split('.')[-1].lower() in VID_FORMATS]
         ni, nv = len(images), len(videos)
 
+        # safety check that we're not mixing data formats (maybe issues for frame numbering later)
+        just_images = len(images) != 0
+        just_videos = len(videos) != 0
+        assert just_images != just_videos
+
         self.img_size = img_size
         self.stride = stride
         self.files = images + videos
@@ -304,6 +309,14 @@ class LoadImages:
         else:
             # Read image
             self.count += 1
+
+            # check if image name is a frame number (ffmpeg writes out in one indexed, tator online shows zero indexed)
+            file_stem = Path(path).stem
+            if 'frame_' in file_stem:
+                file_components = file_stem.split('_')
+                assert len(file_components) == 2 # dxy: baked in assumption of frame_0000.png format names
+                self.frame = int(file_components[1])
+
             im0 = cv2.imread(path)  # BGR
             assert im0 is not None, f'Image Not Found {path}'
             s = f'image {self.count}/{self.nf} {path}: '
