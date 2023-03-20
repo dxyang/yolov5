@@ -79,6 +79,7 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         vid_stride=1,  # video frame-rate stride
+        return_preds_only=False,  # skip predicton post-processing  # sbatchelder 2022-09-27
 ):
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
@@ -114,6 +115,7 @@ def run(
     # Run inference
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
+    results = []
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
@@ -133,6 +135,21 @@ def run(
 
         # Second-stage classifier (optional)
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
+
+        # Skip prediction post-processing and return predictions directly # sbatchelder 2022-09-27
+        if return_preds_only:
+            for det in pred:
+                seen += 1
+                im0, frame = im0s.copy(), getattr(dataset, 'frame', 0)
+                gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]
+                if not len(det): continue
+                det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
+                for *xyxy, conf, cls in reversed(det):
+                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
+                    line = (frame, int(cls.item()), *xywh, conf.item())
+                    results.append(line)
+            LOGGER.info(f"{s}{len(det):02d} detections, {dt[1].dt * 1E3:.1f}ms")
+            continue
 
         # Process predictions
         for i, det in enumerate(pred):  # per image
@@ -215,6 +232,7 @@ def run(
     if update:
         strip_optimizer(weights[0])  # update model (to fix SourceChangeWarning)
 
+    return results
 
 def parse_opt():
     parser = argparse.ArgumentParser()
